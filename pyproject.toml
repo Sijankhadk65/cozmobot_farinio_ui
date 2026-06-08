@@ -1,0 +1,12 @@
+[project]
+name = "farinio-app-ui"
+version = "0.1.0"
+description = "PySide6 GUI to detect a drawn line from the camera and move the Fairino robot along it"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pyside6>=6.6",
+    "opencv-python>=4.8",
+    "numpy>=1.26",
+    "scipy>=1.11",
+]
