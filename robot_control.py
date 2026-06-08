@@ -27,10 +27,24 @@ def _fmt_pose(p):
     return "[" + ", ".join(f"{v:.1f}" for v in p) + "]"
 
 
-class RobotController:
-    """Holds the live RPC connection and exposes the GUI's robot actions."""
+def _default_log(msg, level="info"):
+    """Fallback logger used when no UI logger is injected."""
+    print(f"[{level}] {msg}")
 
-    def __init__(self, log=print):
+
+def _ret_level(ret):
+    """Map an SDK return code to a log level (0 = success, else error)."""
+    return "success" if ret == 0 else "error"
+
+
+class RobotController:
+    """Holds the live RPC connection and exposes the GUI's robot actions.
+
+    The injected ``log`` callable takes ``(msg, level="info")``; levels drive the
+    UI's color-coded log (info/success/warn/error/dryrun/header).
+    """
+
+    def __init__(self, log=_default_log):
         self.robot = None
         self.tool = 0
         self.user = 0
@@ -65,7 +79,7 @@ class RobotController:
         self.tool = robot.GetActualTCPNum()[1]
         self.user = robot.GetActualWObjNum()[1]
         self.robot = robot
-        self.log(f"Connected. Active tool={self.tool}, workpiece={self.user}.")
+        self.log(f"Connected. Active tool={self.tool}, workpiece={self.user}.", "success")
         return self.tool, self.user
 
     def disconnect(self):
@@ -96,12 +110,12 @@ class RobotController:
 
     def home(self):
         """Joint move to the start configuration (no IK needed)."""
-        self.log(f"Homing -> {START_JOINTS}")
+        self.log(f"Homing -> {START_JOINTS}", "header")
         if self.dry_run:
-            self.log(f"[dry-run] would MoveJ to {START_JOINTS} @ vel={self.velocity}")
+            self.log(f"would MoveJ to {START_JOINTS} @ vel={self.velocity}%", "dryrun")
             return None
         ret = self.robot.MoveJ(START_JOINTS, self.tool, self.user, vel=self.velocity)
-        self.log(f"MoveJ home: {ret}")
+        self.log(f"MoveJ home returned {ret}", _ret_level(ret))
         return ret
 
     def linear_move(self, dx=0.0, dy=0.0, dz=0.0):
@@ -111,13 +125,13 @@ class RobotController:
         target[1] += dy
         target[2] += dz
         if self.dry_run:
-            self.log(f"[dry-run] start={_fmt_pose(start_pose)} "
-                     f"delta(dx={dx:.1f}, dy={dy:.1f}, dz={dz:.1f})")
-            self.log(f"[dry-run] would MoveL -> {_fmt_pose(target)} @ vel={self.velocity}")
+            self.log(f"start={_fmt_pose(start_pose)} "
+                     f"delta(dx={dx:.1f}, dy={dy:.1f}, dz={dz:.1f})", "dryrun")
+            self.log(f"would MoveL -> {_fmt_pose(target)} @ vel={self.velocity}%", "dryrun")
             return None
         ret = self.robot.MoveL(desc_pos=target, tool=self.tool, user=self.user,
                                vel=self.velocity)
-        self.log(f"MoveL {target}: {ret}")
+        self.log(f"MoveL -> {_fmt_pose(target)} returned {ret}", _ret_level(ret))
         return ret
 
     def weave_move(self, dx, dy, dz, n_weaves=10, speed_mm_s=20.0,
@@ -131,7 +145,7 @@ class RobotController:
         weave_num = int(weave_num)
         path_len = math.sqrt(dx * dx + dy * dy + dz * dz)
         if path_len == 0:
-            self.log("weave_move: zero-length path, nothing to do")
+            self.log("weave_move: zero-length path, nothing to do", "warn")
             return None
         weave_freq = n_weaves * speed_mm_s / path_len
         self.log(f"path_len={path_len:.1f}mm speed={speed_mm_s}mm/s "
@@ -143,20 +157,20 @@ class RobotController:
         target[1] += dy
 
         if self.dry_run:
-            self.log(f"[dry-run] WeaveSetPara(num={weave_num}, type={weave_type}, "
-                     f"freq={weave_freq:.3f}Hz, range={weave_range}mm)")
-            self.log(f"[dry-run] start={_fmt_pose(start_pose)}")
-            self.log(f"[dry-run] would weave MoveL -> {_fmt_pose(target)} @ vel={self.velocity}")
+            self.log(f"WeaveSetPara(num={weave_num}, type={weave_type}, "
+                     f"freq={weave_freq:.3f}Hz, range={weave_range}mm)", "dryrun")
+            self.log(f"start={_fmt_pose(start_pose)}", "dryrun")
+            self.log(f"would weave MoveL -> {_fmt_pose(target)} @ vel={self.velocity}%", "dryrun")
             return None
 
         rc = self.robot.WeaveSetPara(weave_num, weave_type, weave_freq, 0,
                                      weave_range, 0, 0, 0, 0, 0, 0, 0)
-        self.log(f"WeaveSetPara: {rc}")
-        self.log(f"WeaveStart: {self.robot.WeaveStart(weave_num)}")
+        self.log(f"WeaveSetPara returned {rc}", _ret_level(rc))
+        self.log(f"WeaveStart returned {self.robot.WeaveStart(weave_num)}")
         ret = self.robot.MoveL(desc_pos=target, tool=self.tool, user=self.user,
                                vel=self.velocity)
-        self.log(f"MoveL (weaving, no arc): {ret}")
-        self.log(f"WeaveEnd: {self.robot.WeaveEnd(weave_num)}")
+        self.log(f"MoveL (weaving, no arc) returned {ret}", _ret_level(ret))
+        self.log(f"WeaveEnd returned {self.robot.WeaveEnd(weave_num)}")
         return ret
 
     def move_along_line(self, m, weave=False, weave_type=0):
@@ -168,7 +182,7 @@ class RobotController:
         MoveL); `weave_type` picks the swing pattern (0=triangular, 4=sinusoidal).
         """
         if "length_mm" not in m:
-            self.log("No metric measurement (set plane depth). Move skipped.")
+            self.log("No metric measurement (set plane depth). Move skipped.", "warn")
             return None
 
         length = m["length_mm"]
@@ -177,14 +191,14 @@ class RobotController:
         dx = length * math.cos(angle_rad)
         dy = length * math.sin(angle_rad)
 
-        self.log(f">>> Move along line: length={length:.1f}mm "
+        self.log(f"Move along line: length={length:.1f}mm "
                  f"angle={angle_deg:.1f}deg (+{self.angle_offset_deg:.0f} offset) "
-                 f"-> dx={dx:.1f}, dy={dy:.1f}")
+                 f"-> dx={dx:.1f}, dy={dy:.1f}", "header")
         if weave:
             ret = self.weave_move(dx, dy, 0.0, weave_type=weave_type)
         else:
             ret = self.linear_move(dx, dy, 0.0)
-        self.log(">>> Move complete.")
+        self.log("Move complete.", "success")
         return ret
 
     def move_along_lines(self, measurements, weave=False, weave_type=0):
@@ -196,7 +210,7 @@ class RobotController:
         rets = []
         n = len(measurements)
         for i, m in enumerate(measurements, 1):
-            self.log(f"--- Line {i}/{n} ---")
+            self.log(f"Line {i}/{n}", "header")
             rets.append(self.move_along_line(m, weave, weave_type))
-        self.log(f">>> All {n} line move(s) complete.")
+        self.log(f"All {n} line move(s) complete.", "success")
         return rets

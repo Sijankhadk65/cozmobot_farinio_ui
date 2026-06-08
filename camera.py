@@ -9,10 +9,27 @@ import os
 import glob
 
 import cv2 as cv
+import numpy as np
 
 CAMERA_NAME = "Astra Pro"   # substring matched against /dev/video* device names
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
+
+
+def apply_color_temp(frame, temp):
+    """Shift a BGR frame's color temperature to cancel a warm/cool tint.
+
+    `temp` runs roughly [-100, 100]: negative cools the image (the Astra Pro's
+    warm cast is corrected with negative values), positive warms it, 0 is a
+    no-op. Implemented as complementary red/blue channel gains.
+    """
+    if not temp:
+        return frame
+    factor = temp / 100.0 * 0.5   # ±50% max gain at the extremes
+    out = frame.astype(np.float32)
+    out[:, :, 2] *= 1.0 + factor  # red  channel (BGR -> index 2)
+    out[:, :, 0] *= 1.0 - factor  # blue channel (BGR -> index 0)
+    return np.clip(out, 0, 255).astype(np.uint8)
 
 
 def find_camera_indices(name=CAMERA_NAME):
